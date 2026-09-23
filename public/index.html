@@ -18,6 +18,7 @@
     <nav class="tabs" role="tablist">
       <button class="tab active" data-view="coverage" role="tab">覆盖检测</button>
       <button class="tab" data-view="compare" role="tab">双字体对比</button>
+      <button class="tab" data-view="plan" role="tab">字体搭配规划</button>
       <button class="tab" data-view="reports" role="tab">报告库</button>
     </nav>
   </header>
@@ -111,6 +112,38 @@
       </div>
 
       <div id="compare-result" class="hidden"></div>
+    </section>
+
+    <!-- ================= 字体搭配规划 ================= -->
+    <section class="view" id="view-plan">
+      <div class="card">
+        <h2>字体搭配规划 · 贪心选字（仅基于 cmap 声明）</h2>
+        <p class="hint" style="margin-top:0">
+          输入目标 Unicode 范围与最多使用字体数，系统从<strong>全部已上传字体</strong>的 cmap 区间中逐轮挑选
+          「对当前缺口新增覆盖最多」的字体；新增覆盖相同时按字体 ID 升序取先；
+          某一轮没有任何字体能再增加覆盖时提前结束。
+        </p>
+        <div class="plan-form">
+          <div class="plan-range-col">
+            <label class="select-label">目标范围（与覆盖检测写法一致，支持预设、区间、字面量与 ! 排除项）：
+              <select id="plan-preset" style="margin-bottom:8px"><option value="">— 快速插入预设块 —</option></select>
+              <textarea id="plan-range" rows="5" spellcheck="false"
+                placeholder="例如：&#10;basic-latin, greek, cjk-unified&#10;U+4E00-U+9FFF, emoji&#10;basic-latin, !U+0041-U+005A"></textarea>
+            </label>
+          </div>
+          <div class="plan-side-col">
+            <label class="select-label">最多使用字体数：
+              <input type="number" id="plan-max-fonts" value="6" min="1" max="999" step="1" />
+            </label>
+            <button class="primary wide" id="plan-run">开始规划</button>
+            <button class="ghost wide" id="plan-refresh" style="margin-top:8px">刷新字体列表</button>
+            <div id="plan-font-count" class="hint" style="margin-top:10px">字体列表加载中…</div>
+          </div>
+        </div>
+        <div id="plan-warnings" class="warnings"></div>
+      </div>
+
+      <div id="plan-result" class="hidden"></div>
     </section>
 
     <!-- ================= 报告库 ================= -->

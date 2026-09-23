@@ -4,12 +4,14 @@
 import { api, downloadJson, escapeHtml, fmtNum } from './api.js';
 import { GlyphDetector, groupResults, STATUS_LABELS } from './detector.js';
 import { parseRangeSpec, formatSegments, toHex, PRESET_NAMES } from '/shared/ranges.js';
+import { planFonts, countSegments } from '/shared/font-planner.js';
 
 const state = {
   fonts: [],
   detector: new GlyphDetector(),
   coverageDoc: null,
   compareDoc: null,
+  planDoc: null,
   running: false,
 };
 
@@ -67,6 +69,21 @@ async function loadFonts(selectId) {
       '<option value="">— 选择字体 —</option>' +
       state.fonts.map((f) => `<option value="${f.id}">${escapeHtml(fontLabel(f))}</option>`).join('');
     if (prev) sel.value = prev;
+  }
+  refreshPlanFontCount();
+}
+
+function refreshPlanFontCount() {
+  const box = $('#plan-font-count');
+  if (!box) return;
+  const total = state.fonts.length;
+  const withCmap = state.fonts.filter((f) => Array.isArray(f.cmapRanges) && f.cmapRanges.length).length;
+  if (!total) {
+    box.textContent = '还没有已上传字体，请先在「覆盖检测」页上传。';
+  } else {
+    box.innerHTML =
+      `共 <strong>${total}</strong> 个已上传字体，其中 <strong>${withCmap}</strong> 个含可用 cmap 数据；` +
+      `规划时只从含 cmap 的字体中挑选。`;
   }
 }
 
@@ -151,6 +168,7 @@ function fillPresets(selectId, targetId) {
 }
 fillPresets('coverage-preset', 'coverage-range');
 fillPresets('compare-preset', 'compare-range');
+fillPresets('plan-preset', 'plan-range');
 
 /* ---------------- 覆盖检测 ---------------- */
 
@@ -596,6 +614,183 @@ function renderCompareGroup(g) {
         </div>
       </div>
     </div>`;
+}
+
+/* ---------------- 字体搭配规划 ---------------- */
+
+const PLAN_CAVEAT =
+  '本规划仅基于各字体 cmap 表「声明」的码位区间做区间交集运算，不做真实渲染检测；' +
+  'cmap 声明有码位不代表字形一定可正常渲染（可能是 .notdef 豆腐块、空白或实际回退）。' +
+  '请在「覆盖检测」页对选定字体做真实渲染复核。';
+
+$('#plan-run').addEventListener('click', runPlan);
+$('#plan-refresh').addEventListener('click', async () => {
+  try {
+    await loadFonts();
+    toast('字体列表已刷新');
+  } catch (err) {
+    toast(err.message, true);
+  }
+});
+
+function runPlan() {
+  const rangeInput = $('#plan-range').value;
+  const maxFonts = Number($('#plan-max-fonts').value);
+  const warnBox = $('#plan-warnings');
+  const resultBox = $('#plan-result');
+  warnBox.innerHTML = '';
+
+  let parsed;
+  try {
+    parsed = parseRangeSpec(rangeInput);
+  } catch (err) {
+    return toast(err.message, true);
+  }
+  if (!state.fonts.length) {
+    return toast('还没有已上传字体，请先在「覆盖检测」页上传字体', true);
+  }
+
+  let plan;
+  try {
+    plan = planFonts(parsed.segments, state.fonts, maxFonts);
+  } catch (err) {
+    return toast(err.message, true);
+  }
+  warnBox.innerHTML = parsed.warnings.map((w) => `<div>⚠ ${escapeHtml(w)}</div>`).join('');
+
+  const doc = {
+    reportType: 'font-pairing-plan',
+    schemaVersion: 1,
+    title: `字体搭配规划 ${new Date().toISOString().slice(0, 10)}`,
+    generatedAt: new Date().toISOString(),
+    basis: 'cmap-declared',
+    request: {
+      rangeInput,
+      segments: parsed.segments,
+      exclusions: parsed.exclusions,
+      rangesText: formatSegments(parsed.segments),
+      count: parsed.count,
+      maxFonts,
+    },
+    summary: {
+      total: plan.total,
+      covered: plan.covered,
+      remaining: plan.remaining,
+      rate: plan.rate,
+      fontsUsed: plan.rounds.length,
+      eligibleFonts: plan.eligible,
+      stopReason: plan.stopReason,
+    },
+    rounds: plan.rounds,
+    remainingSegments: plan.remainingSegments,
+    remainingCount: countSegments(plan.remainingSegments),
+    caveats: [PLAN_CAVEAT],
+  };
+  state.planDoc = doc;
+  renderPlan(doc, resultBox);
+  resultBox.classList.remove('hidden');
+}
+
+function planStopText(reason, used, max) {
+  switch (reason) {
+    case 'full':
+      return { text: `🎉 已在第 ${used} 轮覆盖全部目标范围，缺口为 0。`, warn: false };
+    case 'no-gain':
+      return {
+        text: `第 ${used + 1} 轮没有任何剩余字体能再覆盖新的码位（增益均为 0），已提前结束。`,
+        warn: true,
+      };
+    case 'no-fonts':
+      return { text: '已上传字体中没有任何含可用 cmap 数据的字体，无法规划。', warn: true };
+    case 'max-fonts':
+    default:
+      return { text: `已达「最多使用 ${max} 个字体」的上限；仍有缺口未覆盖。`, warn: true };
+  }
+}
+
+function renderPlan(doc, container) {
+  const s = doc.summary;
+  const stat = (cls, num, lbl) =>
+    `<div class="stat ${cls}"><div class="num">${fmtNum(num)}</div><div class="lbl">${lbl}</div></div>`;
+  const stop = planStopText(s.stopReason, s.fontsUsed, doc.request.maxFonts);
+
+  const rows = doc.rounds
+    .map((r) => `
+      <tr>
+        <td class="order">第 ${r.order} 轮</td>
+        <td>
+          <strong>${escapeHtml(r.fontName)}</strong>
+          <div class="muted">字体 #${r.fontId}${r.format ? ` · ${escapeHtml(r.format)}` : ''}</div>
+        </td>
+        <td class="gain">+${fmtNum(r.gain)}</td>
+        <td class="muted">累计 ${fmtNum(r.cumulative)}</td>
+        <td><div class="range-code">${escapeHtml(formatSegments(r.gainSegments))}</div></td>
+      </tr>`)
+    .join('');
+
+  const table = doc.rounds.length
+    ? `<div class="table-wrap">
+        <table class="rounds-table">
+          <thead><tr><th>顺序</th><th>字体</th><th>新增覆盖</th><th>累计覆盖</th><th>本次新增区间</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>`
+    : '<div class="env-box" style="margin-top:6px">没有字体入选（任何字体的 cmap 都未覆盖目标范围）。</div>';
+
+  const remainingText = formatSegments(doc.remainingSegments);
+  const remainingBlock = doc.remainingCount
+    ? `<div class="range-code">${escapeHtml(remainingText)}</div>`
+    : '<div class="range-code empty">无 —— 目标范围已全部被覆盖。</div>';
+
+  container.innerHTML = `
+    <div class="card result-head">
+      <div class="row-between">
+        <h2 style="margin:0">搭配方案：使用 ${s.fontsUsed} 个字体
+          <span class="badge">仅 cmap 声明</span>
+        </h2>
+        <div class="actions" style="margin:0">
+          <button class="ghost" data-export-plan>导出 JSON</button>
+        </div>
+      </div>
+      <div class="rate-line">
+        <strong>总覆盖率</strong>
+        <div class="bar"><div class="bar-fill" style="width:${s.rate}%"></div></div>
+        <span class="pct">${s.rate}%</span>
+      </div>
+      <div class="stat-grid">
+        ${stat('blue', s.total, '目标码位')}
+        ${stat('green', s.covered, '累计覆盖')}
+        ${stat('red', s.remaining, '仍未覆盖')}
+        ${stat('purple', s.fontsUsed, '使用字体数')}
+        ${stat('blue', s.eligibleFonts, '含 cmap 候选字体')}
+      </div>
+      <div class="stop-banner ${stop.warn ? 'warn' : ''}">${escapeHtml(stop.text)}</div>
+      <div class="env-box">
+        范围：${escapeHtml(doc.request.rangesText.slice(0, 400))}${doc.request.rangesText.length > 400 ? ' …' : ''}
+        ｜ 共 ${fmtNum(doc.request.count)} 码位
+        ｜ 上限：${doc.request.maxFonts} 个字体
+      </div>
+      <div class="cmap-note"><strong>⚠ 结果仅基于 cmap 声明，不代表真实渲染。</strong> cmap 声明有码位不等于字形一定可正常渲染（可能为 .notdef 豆腐块 / 空白 / 实际由回退字体渲染），请用「覆盖检测」页的真实渲染模式复核。</div>
+    </div>
+
+    <div class="card" style="margin-top:18px">
+      <h2>字体选择顺序与各自新增覆盖
+        <span class="muted" style="font-weight:400;font-size:12px">（每轮只计入该字体首次覆盖的区间；增益相同时按字体 ID 升序）</span>
+      </h2>
+      ${table}
+    </div>
+
+    <div class="card" style="margin-top:18px">
+      <h2>仍未覆盖的区间 <span class="badge">${fmtNum(doc.remainingCount)} 码位</span></h2>
+      ${remainingBlock}
+      ${renderCaveats(doc.caveats)}
+    </div>
+  `;
+
+  container.querySelector('[data-export-plan]')?.addEventListener('click', () => {
+    downloadJson(doc, `${doc.title.replace(/[^\w一-龥.-]+/g, '_')}.json`);
+    toast('JSON 已导出');
+  });
 }
 
 /* ---------------- 报告库 ---------------- */

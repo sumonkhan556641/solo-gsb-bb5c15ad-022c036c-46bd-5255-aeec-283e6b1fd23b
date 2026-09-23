@@ -260,6 +260,26 @@ export function mergeSegments(raw) {
 }
 
 /**
+ * 两组合并区间的交集（线性双指针），不逐码位展开。
+ * @param {number[][]} a 已合并（升序、不重叠）的区间
+ * @param {number[][]} b 已合并（升序、不重叠）的区间
+ * @returns {number[][]} 交集区间（升序、不重叠）
+ */
+export function intersectSegments(a, b) {
+  const out = [];
+  let i = 0;
+  let j = 0;
+  while (i < a.length && j < b.length) {
+    const lo = Math.max(a[i][0], b[j][0]);
+    const hi = Math.min(a[i][1], b[j][1]);
+    if (lo <= hi) out.push([lo, hi]);
+    if (a[i][1] < b[j][1]) i++;
+    else j++;
+  }
+  return out;
+}
+
+/**
  * 从已合并区间中扣除排除区间。
  * @param {number[][]} segments 已合并（升序、不重叠）的正向区间
  * @param {number[][]} exclusions 已合并的排除区间

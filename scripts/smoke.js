@@ -3,9 +3,10 @@
  * 用法：node scripts/smoke.js
  */
 import assert from 'node:assert/strict';
-import { parseRangeSpec, formatSegments, subtractSegments, PRESETS } from '../shared/ranges.js';
+import { parseRangeSpec, formatSegments, subtractSegments, intersectSegments, PRESETS } from '../shared/ranges.js';
 import { scriptOf } from '../shared/scripts.js';
 import { compressCodepoints, sniffFormat } from '../server/font-parser.js';
+import { planFonts, countSegments } from '../shared/font-planner.js';
 
 // 范围解析
 assert.deepEqual(parseRangeSpec('U+41').segments, [[0x41, 0x41]]);
@@ -72,6 +73,88 @@ assert.equal(sniffFormat(Buffer.from([0x00, 0x01, 0x00, 0x00])), 'ttf');
 assert.equal(sniffFormat(Buffer.from('wOFFxxxx')), 'woff');
 assert.equal(sniffFormat(Buffer.from('wOF2xxxx')), 'woff2');
 assert.equal(sniffFormat(Buffer.from('ttcfxxxx')), 'otf/ttc');
+
+// intersectSegments：区间交集（不逐码位展开）
+assert.deepEqual(
+  intersectSegments([[0x41, 0x50], [0x60, 0x70]], [[0x45, 0x65]]),
+  [[0x45, 0x50], [0x60, 0x65]],
+);
+assert.deepEqual(intersectSegments([[0x41, 0x45]], [[0x50, 0x55]]), []);
+assert.deepEqual(
+  intersectSegments([[0x10, 0x100]], [[0x20, 0x30], [0x80, 0x90]]),
+  [[0x20, 0x30], [0x80, 0x90]],
+);
+// 端点相接
+assert.deepEqual(intersectSegments([[0x41, 0x45]], [[0x45, 0x50]]), [[0x45, 0x45]]);
+assert.deepEqual(
+  intersectSegments([[0x41, 0x44]], [[0x45, 0x50]]),
+  [],
+);
+
+// 字体搭配规划：贪心选字
+{
+  const target = [[0x41, 0x50]]; // 16 码位
+  // F1 覆盖前半 8，F2 覆盖中段 8（与 F1 重叠 4），F3 覆盖尾部 4
+  const F1 = { id: 1, fullName: 'F1', format: 'ttf', cmapRanges: [[0x41, 0x48]] };
+  const F2 = { id: 2, fullName: 'F2', format: 'ttf', cmapRanges: [[0x45, 0x4c]] };
+  const F3 = { id: 3, fullName: 'F3', format: 'ttf', cmapRanges: [[0x4d, 0x50]] };
+
+  const plan = planFonts(target, [F3, F2, F1], 5);
+  // 第 1 轮：F1、F2 均增益 8，按 ID 升序取 F1
+  assert.equal(plan.rounds.length, 3);
+  assert.deepEqual(plan.rounds.map((r) => r.fontId), [1, 2, 3]);
+  assert.equal(plan.rounds[0].gain, 8);
+  assert.deepEqual(plan.rounds[0].gainSegments, [[0x41, 0x48]]);
+  // 第 2 轮：F1 已占 0x41-48，F2 只新增 0x49-4C（4 个，首次覆盖才计入）
+  assert.equal(plan.rounds[1].gain, 4);
+  assert.deepEqual(plan.rounds[1].gainSegments, [[0x49, 0x4c]]);
+  // 第 3 轮：F3 补齐 0x4D-50
+  assert.equal(plan.rounds[2].gain, 4);
+  assert.deepEqual(plan.rounds[2].gainSegments, [[0x4d, 0x50]]);
+  assert.equal(plan.covered, 16);
+  assert.equal(plan.remaining, 0);
+  assert.equal(plan.rate, 100);
+  assert.deepEqual(plan.remainingSegments, []);
+  assert.equal(plan.stopReason, 'full');
+  // cumulative 单调递增
+  assert.deepEqual(plan.rounds.map((r) => r.cumulative), [8, 12, 16]);
+
+  // maxFonts 上限：只允许 1 个字体 → 停止原因为 max-fonts 且有剩余
+  const capped = planFonts(target, [F1, F2, F3], 1);
+  assert.equal(capped.rounds.length, 1);
+  assert.equal(capped.rounds[0].fontId, 1);
+  assert.equal(capped.stopReason, 'max-fonts');
+  assert.equal(capped.remaining, 8);
+  assert.deepEqual(capped.remainingSegments, [[0x49, 0x50]]);
+
+  // 无增益提前结束：所有字体都只覆盖同一区段，第二轮无人能新增
+  const noGain = planFonts(target, [F1, { id: 9, cmapRanges: [[0x41, 0x48]] }], 5);
+  assert.equal(noGain.rounds.length, 1);
+  assert.equal(noGain.rounds[0].fontId, 1);
+  assert.equal(noGain.stopReason, 'no-gain');
+  assert.equal(noGain.remaining, 8);
+
+  // 并列时严格按字体 ID 升序：传入顺序乱序也不影响
+  const tieA = { id: 7, cmapRanges: [[0x41, 0x48]] };
+  const tieB = { id: 3, cmapRanges: [[0x41, 0x48]] };
+  const tie = planFonts(target, [tieA, tieB], 2);
+  assert.equal(tie.rounds[0].fontId, 3);
+  assert.equal(tie.rounds.length, 1);
+  assert.equal(tie.stopReason, 'no-gain');
+
+  // 无 cmap / 空 cmap 的字体被跳过；没有任何合格字体 → no-fonts
+  const broken = { id: 5, cmapRanges: null };
+  const empty = { id: 6, cmapRanges: [] };
+  assert.equal(planFonts(target, [broken, empty], 3).stopReason, 'no-fonts');
+  assert.equal(planFonts(target, [F1, broken, empty], 3).eligible, 1);
+
+  // 区间计数工具
+  assert.equal(countSegments([[0x41, 0x45], [0x100, 0x100]]), 6);
+
+  // maxFonts 非法值报错
+  assert.throws(() => planFonts(target, [F1], 0), /不小于 1/);
+  assert.throws(() => planFonts(target, [F1], 1.5), /不小于 1/);
+}
 
 console.log('smoke tests passed ✓');
 void formatSegments;
