@@ -243,6 +243,37 @@ table.data th { color: var(--muted); font-weight: 600; font-size: 12px; }
   border-radius: 8px; padding: 10px 14px; color: var(--muted); font-size: 12px;
 }
 
+/* 字体搭配规划 */
+.planner-form {
+  display: grid; grid-template-columns: 1fr 220px; gap: 18px;
+  align-items: end; margin-top: 6px;
+}
+.planner-max { display: flex; flex-direction: column; }
+.planner-max .select-label { margin-top: 0; }
+input[type="number"] {
+  width: 100%; background: var(--bg-soft); color: var(--text);
+  border: 1px solid var(--border); border-radius: 8px; padding: 9px 11px;
+  font-family: var(--mono); font-size: 13px; outline: none;
+}
+input[type="number"]:focus { border-color: var(--accent); }
+.caveat-banner {
+  margin-top: 12px; background: var(--amber-soft);
+  border: 1px solid rgba(251,191,36,.3); border-radius: 8px;
+  padding: 10px 14px; color: var(--amber); font-size: 12.5px; line-height: 1.7;
+}
+.range-list {
+  margin: 0; font-family: var(--mono); font-size: 12px; line-height: 1.8;
+  color: var(--text); white-space: pre-wrap; word-break: break-word;
+}
+.plan-table td, .plan-table th { vertical-align: top; }
+.plan-table .round { white-space: nowrap; color: var(--accent); font-weight: 600; }
+.plan-table .pick-name { font-weight: 600; margin-bottom: 2px; }
+.plan-table .num-cell {
+  font-family: var(--mono); font-weight: 700; color: var(--green);
+  white-space: nowrap; text-align: right;
+}
+.plan-table .range-cell { min-width: 260px; max-width: 560px; }
+
 .toast {
   position: fixed; bottom: 28px; left: 50%; transform: translateX(-50%);
   background: #24304a; border: 1px solid var(--accent); color: var(--text);
@@ -260,6 +291,7 @@ footer {
 
 @media (max-width: 900px) {
   .grid.two, .grid.three { grid-template-columns: 1fr; }
+  .planner-form { grid-template-columns: 1fr; }
   .topbar { padding: 14px 16px; }
   main { padding: 16px; }
 }

@@ -3,6 +3,7 @@
  */
 import { api, downloadJson, escapeHtml, fmtNum } from './api.js';
 import { GlyphDetector, groupResults, STATUS_LABELS } from './detector.js';
+import { initPlannerView, setPlanFonts } from './planner-view.js';
 import { parseRangeSpec, formatSegments, toHex, PRESET_NAMES } from '/shared/ranges.js';
 
 const state = {
@@ -60,6 +61,7 @@ function fontLabel(f) {
 
 async function loadFonts(selectId) {
   state.fonts = await api.listFonts();
+  setPlanFonts(state.fonts);
   for (const id of ['coverage-font-select', 'compare-font-a', 'compare-font-b']) {
     const sel = $(`#${id}`);
     const prev = sel.value;
@@ -665,6 +667,7 @@ $('#reports-table').addEventListener('click', async (e) => {
 /* ---------------- 启动 ---------------- */
 
 (async function init() {
+  initPlannerView(PRESET_NAMES);
   try {
     await api.health();
     await loadFonts();

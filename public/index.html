@@ -18,6 +18,7 @@
     <nav class="tabs" role="tablist">
       <button class="tab active" data-view="coverage" role="tab">覆盖检测</button>
       <button class="tab" data-view="compare" role="tab">双字体对比</button>
+      <button class="tab" data-view="planner" role="tab">字体搭配规划</button>
       <button class="tab" data-view="reports" role="tab">报告库</button>
     </nav>
   </header>
@@ -111,6 +112,37 @@
       </div>
 
       <div id="compare-result" class="hidden"></div>
+    </section>
+
+    <!-- ================= 字体搭配规划 ================= -->
+    <section class="view" id="view-planner">
+      <div class="card">
+        <div class="row-between" style="margin-top:0">
+          <h2 style="margin:0">字体搭配规划（贪心 · 仅基于 cmap 声明）</h2>
+          <span class="muted">候选字体：<strong id="planner-font-count">0</strong> 个已上传字体</span>
+        </div>
+        <p class="muted" style="margin:8px 0 0">
+          逐轮选择对当前缺口<strong>新增覆盖最多</strong>的已上传字体；增量相同时按字体 ID 升序取用。
+          每轮只把首次覆盖的区间归给该字体；任一剩余字体均无增益时提前结束。
+        </p>
+        <div class="planner-form">
+          <div class="planner-range">
+            <label class="select-label">Unicode 范围表达式（与覆盖检测写法一致，支持 <code>!</code> 排除项）：
+              <select id="planner-preset"><option value="">— 快速插入预设块 —</option></select>
+            </label>
+            <textarea id="planner-range" rows="4" spellcheck="false"
+              placeholder="例如：&#10;basic-latin, cjk-unified&#10;U+4E00-U+4FFF, !U+4E00-U+4E10"></textarea>
+          </div>
+          <div class="planner-max">
+            <label class="select-label" for="planner-max-fonts">最多使用字体数</label>
+            <input type="number" id="planner-max-fonts" min="1" max="999" step="1" value="5" />
+            <button class="primary wide" id="planner-run">开始规划</button>
+          </div>
+        </div>
+        <div id="planner-warnings" class="warnings"></div>
+      </div>
+
+      <div id="planner-result" class="hidden"></div>
     </section>
 
     <!-- ================= 报告库 ================= -->
